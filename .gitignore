@@ -1,0 +1,14 @@
+# scan output
+results/
+*.log
+
+# local candidate/validation working files
+validation*.json
+verified*.txt
+candidates*.txt
+cand[0-9]*.txt
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/

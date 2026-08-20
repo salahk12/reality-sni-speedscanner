@@ -194,7 +194,7 @@ def install_on_windows():
         return False
 
     print_info("Installing Python packages...")
-    packages = ['requests', 'cryptography']
+    packages = ['requests', 'cryptography', 'PySocks']
     for package in packages:
         if not check_python_package(package):
             print_info(f"Installing {package}...")
@@ -234,7 +234,7 @@ def install_on_linux():
         subprocess.run(cmd, shell=True, capture_output=True)
 
     print_info("Installing Python packages...")
-    packages = ['requests', 'cryptography']
+    packages = ['requests', 'cryptography', 'PySocks']
     for package in packages:
         if not check_python_package(package):
             print_info(f"Installing {package}...")
@@ -267,7 +267,7 @@ def install_on_macos():
     subprocess.run('brew install python3 curl openssl', shell=True, capture_output=True)
 
     print_info("Installing Python packages...")
-    packages = ['requests', 'cryptography']
+    packages = ['requests', 'cryptography', 'PySocks']
     for package in packages:
         if not check_python_package(package):
             print_info(f"Installing {package}...")
@@ -295,7 +295,7 @@ def create_requirements_file():
     if not os.path.exists('requirements.txt'):
         with open('requirements.txt', 'w') as f:
             f.write('# Master SNI Scanner v2.1.0\n')
-            f.write('requests>=2.31.0\n')
+            f.write('requests>=2.31.0\nPySocks>=1.7.1\n')
             f.write('cryptography>=41.0.0\n')
         print_success("Created: requirements.txt")
     else:
