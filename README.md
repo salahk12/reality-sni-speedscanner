@@ -74,10 +74,14 @@ sudo bash install-server.sh --api-port 9090 --base-port 40000 --count 500
 
 ### 2. On your own machine
 
-Needs Python 3, `xray` (or `xray.exe` next to the script), and PySocks:
+Needs Python 3, `xray` (or `xray.exe` next to the script), plus `requests`
+and `PySocks`:
 
 ```bash
 pip install requests PySocks
+
+# Ubuntu 24 / Debian 12 refuse that (PEP 668). Use the distro packages:
+sudo apt install python3-requests python3-socks
 ```
 
 Check you can reach the server before scanning:

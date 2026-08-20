@@ -79,6 +79,9 @@ sudo bash install-server.sh --api-port 9090 --base-port 40000 --count 500
 
 ```bash
 pip install requests PySocks
+
+# اوبونتو ۲۴ و دبیان ۱۲ این را رد می‌کنند (PEP 668). از بسته‌های سیستمی استفاده کنید:
+sudo apt install python3-requests python3-socks
 ```
 
 </div>

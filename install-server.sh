@@ -96,36 +96,72 @@ fi
 # 1. System packages
 # ---------------------------------------------------------------------------
 info "checking system packages"
+if command -v apt-get >/dev/null 2>&1;   then PKG=apt
+elif command -v dnf >/dev/null 2>&1;     then PKG=dnf
+elif command -v yum >/dev/null 2>&1;     then PKG=yum
+else PKG=""; fi
+
+pkg_install() {
+    case "$PKG" in
+        apt) DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" >/dev/null 2>&1 ;;
+        dnf) dnf install -y -q "$@" >/dev/null 2>&1 ;;
+        yum) yum install -y -q "$@" >/dev/null 2>&1 ;;
+        *)   return 1 ;;
+    esac
+}
+
 MISSING=""
 for cmd in curl unzip lsof python3; do
     command -v "$cmd" >/dev/null 2>&1 || MISSING="$MISSING $cmd"
 done
 if [[ -n "$MISSING" ]]; then
+    [[ -n "$PKG" ]] || die "no supported package manager; install$MISSING by hand"
     info "installing:$MISSING"
-    if command -v apt-get >/dev/null 2>&1; then
-        apt-get update -qq && apt-get install -y -qq $MISSING python3-pip
-    elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y -q $MISSING python3-pip
-    elif command -v yum >/dev/null 2>&1; then
-        yum install -y -q $MISSING python3-pip
-    else
-        die "no supported package manager found; install$MISSING by hand"
-    fi
+    [[ "$PKG" == apt ]] && apt-get update -qq >/dev/null 2>&1
+    pkg_install $MISSING || die "could not install$MISSING"
 fi
 ok "system packages present"
 
 # ---------------------------------------------------------------------------
 # 2. Python dependencies
+#
+# Distro packages first. Ubuntu 24 and Debian 12 mark the system Python as
+# externally managed (PEP 668), so a bare `pip3 install` is refused there, and
+# pip3 itself is often not installed at all - checking only for python3 is not
+# enough.
 # ---------------------------------------------------------------------------
-info "checking Python dependencies"
-python3 - <<'PY' || pip3 install --quiet --break-system-packages requests PySocks 2>/dev/null \
-                 || pip3 install --quiet requests PySocks
+have_py_deps() {
+    python3 - <<'PY'
 import importlib.util, sys
 sys.exit(0 if all(importlib.util.find_spec(m) for m in ('requests', 'socks')) else 1)
 PY
-python3 -c "import requests, socks" 2>/dev/null \
-    || die "could not install requests / PySocks"
-ok "requests and PySocks available"
+}
+
+info "checking Python dependencies"
+if have_py_deps; then
+    ok "requests and PySocks already available"
+else
+    info "installing requests and PySocks"
+    case "$PKG" in
+        apt) apt-get update -qq >/dev/null 2>&1
+             pkg_install python3-requests python3-socks || true ;;
+        dnf|yum)
+             pkg_install python3-requests python3-pysocks || true ;;
+    esac
+
+    if ! have_py_deps; then
+        command -v pip3 >/dev/null 2>&1 || pkg_install python3-pip || true
+        if command -v pip3 >/dev/null 2>&1; then
+            pip3 install --quiet --break-system-packages requests PySocks >/dev/null 2>&1 \
+                || pip3 install --quiet requests PySocks >/dev/null 2>&1 || true
+        fi
+    fi
+
+    have_py_deps || die "could not install requests / PySocks.
+     Try by hand:  apt-get install -y python3-requests python3-socks
+             or:   pip3 install --break-system-packages requests PySocks"
+    ok "requests and PySocks installed"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Xray-core
