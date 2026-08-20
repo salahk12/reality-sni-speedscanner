@@ -172,12 +172,26 @@ def get_xray_path():
     return shutil.which('xray')
 
 
+# Every tunnel this process starts, so shutdown kills exactly those and nothing
+# else. A blanket `pkill -9 xray` matches any binary with xray in its name -
+# including the `xray-linux-amd64` an x-ui panel runs - and would disconnect
+# that panel's users on a machine that happens to host one.
+_spawned_lock = threading.Lock()
+_spawned_procs = []
+
+
 def kill_all_xray():
-    """Kill every Xray process. Only used at shutdown, never per worker."""
-    if platform.system().lower() == 'windows':
-        subprocess.run('taskkill /f /im xray.exe', shell=True, capture_output=True)
-    else:
-        subprocess.run('pkill -9 xray', shell=True, capture_output=True)
+    """Terminate the Xray processes this run started. Used at shutdown only."""
+    with _spawned_lock:
+        procs, _spawned_procs[:] = list(_spawned_procs), []
+    for proc in procs:
+        if proc.poll() is not None:
+            continue
+        try:
+            proc.kill()
+            proc.wait(timeout=3)
+        except Exception:
+            pass
 
 
 class XrayTunnel:
@@ -217,6 +231,8 @@ class XrayTunnel:
             kwargs['start_new_session'] = True
 
         self.process = subprocess.Popen([xray_path, 'run', '-c', self.config_path], **kwargs)
+        with _spawned_lock:
+            _spawned_procs.append(self.process)
 
         # Poll until the SOCKS port accepts connections instead of sleeping a
         # fixed interval: faster on a good machine, more reliable on a slow one.

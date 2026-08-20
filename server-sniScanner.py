@@ -141,12 +141,47 @@ def free_port(port):
         return False
 
 
+XRAY_CONFIG_PATH = '/usr/local/etc/xray/config.json'
+
+
+def kill_scanner_xray():
+    """Kill only the Xray this scanner started.
+
+    `pkill -9 xray` is a substring match, so it also kills a panel's own Xray -
+    x-ui runs its binary as `xray-linux-amd64`, which the pattern happily
+    matches. Every config apply then disconnected that panel's customers until
+    it respawned. Match on our config path instead, which nothing else uses.
+    """
+    killed = []
+    try:
+        result = subprocess.run(f"pgrep -f -- '{XRAY_CONFIG_PATH}'", shell=True,
+                                capture_output=True, text=True)
+        own_pid = str(os.getpid())
+        for pid in result.stdout.strip().split('\n'):
+            pid = pid.strip()
+            if not pid or pid == own_pid:
+                continue
+            try:
+                with open(f'/proc/{pid}/cmdline', 'rb') as handle:
+                    cmdline = handle.read().decode('utf-8', 'ignore')
+            except OSError:
+                continue
+            # Only an Xray running our config, never anything else.
+            if 'xray' in cmdline.lower() and XRAY_CONFIG_PATH in cmdline:
+                subprocess.run(f'kill -9 {pid}', shell=True, capture_output=True)
+                killed.append(pid)
+    except Exception:
+        pass
+    return killed
+
+
 def check_not_a_production_panel():
     """Refuse to run on a box that is already serving proxy customers.
 
-    apply_xray_config() overwrites /usr/local/etc/xray/config.json and runs
-    `pkill -9 xray`. On a live 3x-ui / x-ui host that kills the panel's own Xray
-    process and drops every connected customer. Use a clean, disposable VPS.
+    apply_xray_config() overwrites /usr/local/etc/xray/config.json and restarts
+    Xray. Even with the kill scoped to our own process, the systemd `xray` unit
+    is shared, so a host already serving proxy customers is the wrong place to
+    scan from. Use a clean, disposable VPS.
     """
     found = []
     for name in ('x-ui', '3x-ui', 'hiddify', 'marzban'):
@@ -154,8 +189,10 @@ def check_not_a_production_panel():
         if result.stdout.strip():
             found.append(name)
 
-    xray_running = subprocess.run("pgrep -x xray", shell=True,
-                                  capture_output=True, text=True).stdout.strip()
+    # x-ui names its binary xray-linux-amd64, so an exact-name match misses it.
+    xray_running = subprocess.run(
+        "pgrep -af xray | grep -v -- '%s'" % XRAY_CONFIG_PATH,
+        shell=True, capture_output=True, text=True).stdout.strip()
     if xray_running and not found:
         # An Xray that this script did not start is still someone's traffic.
         found.append('xray (already running)')
@@ -164,7 +201,7 @@ def check_not_a_production_panel():
         return True
 
     print_error("This host is already running: " + ", ".join(found))
-    print_error("The scanner rewrites the Xray config and runs 'pkill -9 xray'.")
+    print_error("The scanner rewrites the Xray config and restarts the service.")
     print_error("On a live panel that disconnects every customer on this server.")
     print_warning("Use a clean VPS for scanning instead.")
     answer = input(f"{YELLOW}Continue anyway and risk dropping live traffic? "
@@ -436,7 +473,7 @@ def wait_for_ports_free(ports, timeout=20.0):
 
 def apply_xray_config(config):
     """Apply configuration to Xray and restart the service."""
-    config_path = '/usr/local/etc/xray/config.json'
+    config_path = XRAY_CONFIG_PATH
     try:
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
@@ -445,13 +482,14 @@ def apply_xray_config(config):
                  if 'port' in inbound]
 
         subprocess.run('systemctl stop xray', shell=True, capture_output=True)
-        subprocess.run('pkill -9 xray', shell=True, capture_output=True)
+        kill_scanner_xray()
 
-        # Wait for the process to actually be gone before touching the ports.
+        # Wait for our own process to actually be gone before touching ports.
         deadline = time.time() + 10
         while time.time() < deadline:
-            if not subprocess.run('pgrep -x xray', shell=True,
-                                  capture_output=True).stdout.strip():
+            still = subprocess.run(f"pgrep -f -- '{XRAY_CONFIG_PATH}'", shell=True,
+                                   capture_output=True, text=True).stdout.strip()
+            if not still:
                 break
             time.sleep(0.2)
 
@@ -502,8 +540,9 @@ def create_minimal_config():
         json.dump(minimal_config, f, indent=2)
 
     subprocess.run('systemctl stop xray', shell=True, capture_output=True)
-    subprocess.run('pkill -9 xray', shell=True, capture_output=True)
+    kill_scanner_xray()
     time.sleep(1)
+    subprocess.run('systemctl reset-failed xray', shell=True, capture_output=True)
     subprocess.run('systemctl start xray', shell=True, capture_output=True)
     time.sleep(2)
 
