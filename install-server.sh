@@ -33,6 +33,7 @@ die()   { echo "${RED}[xx]${RESET} $*" >&2; exit 1; }
 usage() {
     cat <<USAGE
 Usage: sudo bash install-server.sh [options]
+       curl -fsSL <raw-url>/install-server.sh | sudo bash -s -- [options]
 
   --reality-port N   Reality port for legacy single-port mode (default $REALITY_PORT)
   --api-port N       Port the scanner API listens on (default $API_PORT)
@@ -56,12 +57,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_URL=https://github.com/salahk12/reality-sni-speedscanner.git
+INSTALL_DIR=/opt/reality-sni-speedscanner
 END_PORT=$((BASE_PORT + PORT_COUNT))
+
+# Where the project lives. Piped through curl there is no script on disk, so
+# BASH_SOURCE is empty and the repo has to be fetched; run from a clone, use it.
+SELF_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+if [[ -n "$SELF_DIR" && -f "$SELF_DIR/server-sniScanner.py" ]]; then
+    REPO_DIR="$SELF_DIR"
+    BOOTSTRAP=0
+else
+    REPO_DIR="$INSTALL_DIR"
+    BOOTSTRAP=1
+fi
 
 echo
 echo "${BOLD}Reality SNI Speed Scanner - server setup${RESET}"
-echo "  repo        : $REPO_DIR"
 echo "  API port    : $API_PORT"
 echo "  inbound rng : $BASE_PORT-$END_PORT"
 echo
@@ -69,9 +84,7 @@ echo
 # ---------------------------------------------------------------------------
 # 0. Sanity
 # ---------------------------------------------------------------------------
-[[ $EUID -eq 0 ]] || die "run as root:  sudo bash install-server.sh"
-[[ -f "$REPO_DIR/server-sniScanner.py" ]] || \
-    die "server-sniScanner.py not found next to this script"
+[[ $EUID -eq 0 ]] || die "run as root"
 
 # Applying a scan config rewrites the Xray config and runs pkill -9 xray. On a
 # host that is already serving proxy customers that disconnects all of them.
@@ -121,6 +134,24 @@ if [[ -n "$MISSING" ]]; then
     pkg_install $MISSING || die "could not install$MISSING"
 fi
 ok "system packages present"
+
+# ---------------------------------------------------------------------------
+# 1b. The project itself, when we were piped in rather than run from a clone
+# ---------------------------------------------------------------------------
+if [[ $BOOTSTRAP -eq 1 ]]; then
+    command -v git >/dev/null 2>&1 || { [[ "$PKG" == apt ]] && apt-get update -qq >/dev/null 2>&1
+                                        pkg_install git || die "could not install git"; }
+    if [[ -d "$REPO_DIR/.git" ]]; then
+        info "updating $REPO_DIR"
+        git -C "$REPO_DIR" pull --quiet --ff-only || warn "could not fast-forward, keeping what is there"
+    else
+        info "cloning into $REPO_DIR"
+        git clone --quiet "$REPO_URL" "$REPO_DIR" || die "could not clone $REPO_URL"
+    fi
+fi
+[[ -f "$REPO_DIR/server-sniScanner.py" ]] || \
+    die "server-sniScanner.py not found in $REPO_DIR"
+ok "project at $REPO_DIR"
 
 # ---------------------------------------------------------------------------
 # 2. Python dependencies
